@@ -2,17 +2,25 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"github.com/gorilla/mux"
+	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
 
 	"time"
 )
 
+const portVar = "PORT"
+const servicesVar = "VCAP_SERVICES"
+
+var port string
+var mgoUrl string
 var router *mux.Router
 var jobs = struct {
 	sync.RWMutex
@@ -20,7 +28,42 @@ var jobs = struct {
 }{m: make(map[string]*PingJob)}
 var pingCh chan *HttpResponse
 
+func loadMongoDBUrlFromEnv() (string, error) {
+	if s := os.Getenv(servicesVar); s != "" {
+
+		var srv struct {
+			UserProvied []struct {
+				Credentials struct {
+					Uri string
+				}
+			} `json:"user-provided"`
+		}
+
+		json.Unmarshal([]byte(s), &srv)
+
+		return srv.UserProvied[0].Credentials.Uri, nil
+	}
+	return "", errors.New("MongoDB Config not found")
+}
+
+var session *mgo.Session
+var db *mgo.Database
+
 func init() {
+	if port = os.Getenv(portVar); port == "" {
+		port = ":8080"
+	}
+	mgoUrl, err := loadMongoDBUrlFromEnv()
+	if err != nil {
+		mgoUrl = "localhost"
+	}
+
+	session, err := mgo.Dial(mgoUrl)
+	if err != nil {
+		panic(err)
+	}
+	db = session.DB("healthcheck")
+
 	pingCh = make(chan *HttpResponse)
 
 	router = mux.NewRouter()
@@ -34,14 +77,14 @@ func init() {
 
 func main() {
 
-	go startJobs()
+	go startJobsPersistor()
 
-	if err := http.ListenAndServe(":8080", router); err != nil {
+	if err := http.ListenAndServe(port, router); err != nil {
 		panic(err)
 	}
 }
 
-func startJobs() {
+func startJobsPersistor() {
 	for resp := range pingCh {
 		err := db.C("ping").Insert(resp)
 		if err != nil {
