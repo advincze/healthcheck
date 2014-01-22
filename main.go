@@ -51,7 +51,7 @@ var db *mgo.Database
 
 func init() {
 	if port = os.Getenv(portVar); port == "" {
-		port = ":8080"
+		port = "8080"
 	}
 	mgoUrl, err := loadMongoDBUrlFromEnv()
 	if err != nil {
@@ -79,7 +79,7 @@ func main() {
 
 	go startJobsPersistor()
 
-	if err := http.ListenAndServe(port, router); err != nil {
+	if err := http.ListenAndServe(":"+port, router); err != nil {
 		panic(err)
 	}
 }
@@ -94,7 +94,7 @@ func startJobsPersistor() {
 }
 
 func listJobs(w http.ResponseWriter, req *http.Request) {
-	bytes, err := json.MarshalIndent(jobs, "", " ")
+	bytes, err := json.MarshalIndent(jobs.m, "", " ")
 	if err != nil {
 		panic(err)
 	}
