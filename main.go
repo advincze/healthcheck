@@ -2,13 +2,11 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"strconv"
-	"sync"
+	"github.com/advincze/auth"
 	"github.com/gorilla/mux"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
@@ -16,70 +14,37 @@ import (
 	"time"
 )
 
-const portVar = "PORT"
-const servicesVar = "VCAP_SERVICES"
-
-var port string
-var mgoUrl string
-var router *mux.Router
-var jobs = struct {
-	sync.RWMutex
-	m map[string]*PingJob
-}{m: make(map[string]*PingJob)}
-var pingCh chan *HttpResponse
-
-func loadMongoDBUrlFromEnv() (string, error) {
-	if s := os.Getenv(servicesVar); s != "" {
-
-		var srv struct {
-			UserProvied []struct {
-				Credentials struct {
-					Uri string
-				}
-			} `json:"user-provided"`
-		}
-
-		json.Unmarshal([]byte(s), &srv)
-
-		return srv.UserProvied[0].Credentials.Uri, nil
-	}
-	return "", errors.New("MongoDB Config not found")
-}
+var router = mux.NewRouter()
+var jobs = newPingJobs()
+var pingCh chan *httpResponse
 
 var session *mgo.Session
 var db *mgo.Database
 
 func init() {
-	if port = os.Getenv(portVar); port == "" {
-		port = "8080"
-	}
-	mgoUrl, err := loadMongoDBUrlFromEnv()
-	if err != nil {
-		mgoUrl = "localhost"
-	}
-
-	session, err := mgo.Dial(mgoUrl)
+	session, err := mgo.Dial(mgoURL)
 	if err != nil {
 		panic(err)
 	}
 	db = session.DB("healthcheck")
 
-	pingCh = make(chan *HttpResponse)
+	pingCh = make(chan *httpResponse)
 
-	router = mux.NewRouter()
-	router.HandleFunc("/jobs", basicAuth(listJobs, auth)).Methods("GET")
-	router.HandleFunc("/jobs/{id}", basicAuth(showJob, auth)).Methods("GET")
-	router.HandleFunc("/jobs/{id}/_stop", basicAuth(stopJob, auth)).Methods("POST")
-	router.HandleFunc("/jobs/{id}/_stop", basicAuth(restartJob, auth)).Methods("POST")
-	router.HandleFunc("/jobs", basicAuth(createJob, auth)).Methods("POST")
-	router.HandleFunc("/pings", basicAuth(searchPings, auth)).Methods("GET")
+	auth.SetConstantAuth("foo", "bar")
+
+	router.HandleFunc("/jobs", listJobs).Methods("GET")
+	router.HandleFunc("/jobs/{id}", showJob).Methods("GET")
+	router.HandleFunc("/jobs/{id}/_stop", stopJob).Methods("POST")
+	router.HandleFunc("/jobs/{id}/_restart", restartJob).Methods("POST")
+	router.HandleFunc("/jobs", createJob).Methods("POST")
+	router.HandleFunc("/pings", searchPings).Methods("GET")
 }
 
 func main() {
 
 	go startJobsPersistor()
 
-	if err := http.ListenAndServe(":"+port, router); err != nil {
+	if err := http.ListenAndServe(":"+port, auth.Basic(router)); err != nil {
 		panic(err)
 	}
 }
@@ -94,6 +59,8 @@ func startJobsPersistor() {
 }
 
 func listJobs(w http.ResponseWriter, req *http.Request) {
+	jobs.RLock()
+	defer jobs.RUnlock()
 	bytes, err := json.MarshalIndent(jobs.m, "", " ")
 	if err != nil {
 		panic(err)
@@ -111,7 +78,7 @@ func createJob(w http.ResponseWriter, req *http.Request) {
 
 	var conf = struct {
 		Period string
-		Url    string
+		URL    string
 	}{}
 	err = json.Unmarshal(body, &conf)
 	if err != nil {
@@ -123,8 +90,8 @@ func createJob(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 
-	job := NewPingJob()
-	job.StartAsync(pingCh, period, conf.Url)
+	job := newPingJob()
+	job.StartAsync(pingCh, period, conf.URL)
 
 	key := fmt.Sprintf("%d", time.Now().UnixNano())
 	jobs.Lock()
@@ -197,7 +164,7 @@ func restartJob(w http.ResponseWriter, req *http.Request) {
 	}
 
 	period, _ := time.ParseDuration(job.Period)
-	job.StartAsync(pingCh, period, job.Url)
+	job.StartAsync(pingCh, period, job.URL)
 
 	bytes, err := json.MarshalIndent(job, "", " ")
 	if err != nil {
@@ -257,7 +224,7 @@ func searchPings(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	var pings []*HttpResponse
+	var pings []*httpResponse
 
 	err := db.C("ping").Find(query).All(&pings)
 	if err != nil {
