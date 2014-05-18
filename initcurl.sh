@@ -1,0 +1,6 @@
+curl -u foo:bar -X POST "http://healthcheck.cfapp.fjordit.com/jobs" -d '{ "period" : "10m", "url": "https://as-jira.axelspringer.de" }'
+curl -u foo:bar -X POST "http://healthcheck.cfapp.fjordit.com/jobs" -d '{ "period" : "10m", "url": "http://www.welt.de" }'
+curl -u foo:bar -X POST "http://healthcheck.cfapp.fjordit.com/jobs" -d '{ "period" : "10m", "url": "http://dev2.welt.de" }'
+curl -u foo:bar -X POST "http://healthcheck.cfapp.fjordit.com/jobs" -d '{ "period" : "10m", "url": "http://uat2.welt.de" }'
+curl -u foo:bar -X POST "http://healthcheck.cfapp.fjordit.com/jobs" -d '{ "period" : "10m", "url": "http://www.heise.de" }'
+curl -u foo:bar -X POST "http://healthcheck.cfapp.fjordit.com/jobs" -d '{ "period" : "10m", "url": "http://www.google.com" }'
